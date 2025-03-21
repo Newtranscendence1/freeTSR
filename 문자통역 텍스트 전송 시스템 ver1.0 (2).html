@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>문자통역 텍스트 전송 시스템</title>
+  <!-- PeerJS 라이브러리 (CDN) -->
+  <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    .hidden { display: none; }
+    h1 { text-align: center; }
+    #notice-panel, #role-selection { text-align: center; margin-top: 20px; }
+    #notice-panel, #role-selection, #stenographer-panel, #participant-panel { margin-top: 20px; }
+    /* 텍스트 영역: 자동 줄바꿈 처리, 수평 스크롤 숨김 */
+    #log, #received-text { 
+      border: 1px solid #ccc; 
+      padding: 10px; 
+      overflow-y: auto; 
+      overflow-x: hidden;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    #log { height: 200px; }
+    #received-text { height: 200px; }
+    #text-input { height: 200px; width: 100%; box-sizing: border-box; margin-bottom: 10px; }
+    input, textarea { margin-bottom: 10px; }
+    .id-field, .pass-field { width: 300px; border: none; background: none; text-align: center; }
+    /* 메시지는 컨테이너의 폰트 사이즈를 그대로 상속 */
+    #received-text p, #log p { margin: 0; }
+    .preview { color: inherit; font-style: italic; }
+    #notice-panel { border: 1px solid #ccc; padding: 20px; }
+    #role-selection button { margin: 10px; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 3px 0; }
+    .reset-button {
+      background-color: black; color: white; border: none; padding: 5px 10px;
+      cursor: pointer; margin-left: 10px;
+    }
+    #btn-send, #btn-connect {
+      display: block; margin: 10px auto; padding: 10px 20px; font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <!-- 타이틀 -->
+  <h1>문자통역 텍스트 전송 시스템</h1>
+
+  <!-- 안내사항 패널 -->
+  <div id="notice-panel">
+    <h2>사용 안내사항</h2>
+    <p>이 코드는 속기사가 텍스트를 입력하고, 참여자가 실시간으로 이를 수신하는 시스템입니다.</p>
+    <p>문자통역을 받거나 서비스를 제공하고자 하는 모든 사람들을 위해서 제작되었습니다.</p>
+    <p>누구나 무료로 사용가능합니다.</p>
+    <p>네트워크 환경이나 브라우저 특성에 따라 예기치 않은 연결 문제가 발생할 수 있으니, 사용 전 반드시 확인해 주세요.</p>
+    <p>사용 중 발생한 문제에 대해서 제작자는 책임을 지지 않습니다.</p>
+    <p>불편사항이나 건의사항은</p>
+    <p>제작자 이메일 : newtranscendence1@gmail.com</p>
+    <p>제작자 블로그 : https://newtranscendence.blogspot.com/</p>
+    <p>본 코드 사용 시, 모든 내용을 숙지하고 동의하는 것으로 간주됩니다.</p>
+    <button id="btn-agree">동의합니다</button>
+  </div>
+
+  <!-- 역할 선택 -->
+  <div id="role-selection" class="hidden">
+    <button id="btn-stenographer">속기사로 시작</button>
+    <button id="btn-participant">참여자로 시작</button>
+  </div>
+
+  <!-- 속기사 패널 -->
+  <div id="stenographer-panel" class="hidden">
+    <h2>속기사 (Stenographer)</h2>
+    <!-- 색상 조절 컨트롤 -->
+    <div style="margin-bottom: 10px;">
+      <label for="bg-color-steno">바탕화면 색상:</label>
+      <input type="color" id="bg-color-steno" value="#ffffff">
+      <label for="text-color-steno">글씨 색상:</label>
+      <input type="color" id="text-color-steno" value="#000000">
+      <button id="reset-colors-steno" class="reset-button">초기화</button>
+    </div>
+    <!-- 속기사 정보 -->
+    <p>
+      당신의 ID:
+      <input type="password" id="my-id" class="id-field" readonly>
+      &nbsp; 연결 암호:
+      <input type="password" id="steno-password" class="pass-field" placeholder="연결 암호를 입력하세요">
+      <button id="toggle-steno-credentials">보기</button>
+      <button id="copy-steno-credentials">복사</button>
+    </p>
+    <textarea id="text-input" placeholder="텍스트 입력..."></textarea><br>
+    <button id="btn-send">전송</button>
+    <div style="margin-bottom: 10px;">
+      <label for="font-size-steno">글씨 크기:</label>
+      <input type="number" id="font-size-steno" value="16" min="10" max="50"> px
+    </div>
+    <div style="margin-bottom: 10px;">
+      <label for="log-height-steno">전송 로그 높이:</label>
+      <input type="number" id="log-height-steno" value="200" min="100" max="600"> px
+    </div>
+    <h3>전송 로그</h3>
+    <div id="log"></div>
+    <!-- 접속자 이력 (누적 기록) -->
+    <h3>접속자 이력</h3>
+    <ul id="connection-history-steno"></ul>
+  </div>
+
+  <!-- 참여자 패널 -->
+  <div id="participant-panel" class="hidden">
+    <h2>참여자 (Participant)</h2>
+    <!-- 색상 조절 컨트롤 -->
+    <div style="margin-bottom: 10px;">
+      <label for="bg-color-participant">바탕화면 색상:</label>
+      <input type="color" id="bg-color-participant" value="#ffffff">
+      <label for="text-color-participant">글씨 색상:</label>
+      <input type="color" id="text-color-participant" value="#000000">
+      <button id="reset-colors-participant" class="reset-button">초기화</button>
+    </div>
+    <!-- 속기사 ID 및 암호 입력 -->
+    <p>
+      속기사 ID 및 연결 암호:
+      <input type="password" id="steno-credentials-input" class="id-field" placeholder="속기사 ID와 연결 암호">
+      <button id="toggle-participant-credentials">보기</button>
+    </p>
+    <p>
+      닉네임 입력:
+      <input type="text" id="nickname-input" placeholder="사용할 닉네임">
+    </p>
+    <button id="btn-connect">연결</button>
+    <div style="margin-bottom: 10px;">
+      <label for="font-size">글씨 크기:</label>
+      <input type="number" id="font-size" value="16" min="10" max="50"> px
+      <label for="log-height">로그창 높이:</label>
+      <input type="number" id="log-height" value="200" min="100" max="600"> px
+    </div>
+    <!-- 접속자 이력 (stenographer가 보낸 이력을 그대로 표시) -->
+    <h3>접속자 이력</h3>
+    <ul id="connection-history-participant"></ul>
+    <h3>수신된 텍스트 및 상태</h3>
+    <div id="received-text"></div>
+  </div>
+
+  <script>
+    /* ----- 헬퍼 함수 (색상 보정 등) ----- */
+    function hexToRgb(hex) {
+      hex = hex.replace(/^#/, '');
+      if(hex.length === 3){ hex = hex.split('').map(h => h+h).join(''); }
+      var bigint = parseInt(hex, 16);
+      return { r: (bigint >> 16) & 255, g: (bigint >> 8) & 255, b: bigint & 255 };
+    }
+    function rgbToHsl(r, g, b) {
+      r /= 255; g /= 255; b /= 255;
+      var max = Math.max(r, g, b), min = Math.min(r, g, b);
+      var h, s, l = (max + min) / 2;
+      if(max === min){ h = s = 0; }
+      else {
+        var d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch(max){
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return { h, s, l };
+    }
+    function hslToRgb(h, s, l) {
+      var r, g, b;
+      if(s === 0){ r = g = b = l; }
+      else {
+        function hue2rgb(p, q, t){
+          if(t < 0) t += 1;
+          if(t > 1) t -= 1;
+          if(t < 1/6) return p + (q - p) * 6 * t;
+          if(t < 1/2) return q;
+          if(t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+          return p;
+        }
+        var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        var p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1/3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1/3);
+      }
+      return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+    }
+    function rgbToHex(r, g, b) {
+      return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    }
+    function adjustSaturation(hex, factor) {
+      var rgb = hexToRgb(hex);
+      var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+      hsl.s = Math.max(0, Math.min(1, hsl.s * factor));
+      var newRgb = hslToRgb(hsl.h, hsl.s, hsl.l);
+      return rgbToHex(newRgb.r, newRgb.g, newRgb.b);
+    }
+    function updateAllControlStyles(bgColor, textColor) {
+      var adjBg = adjustSaturation(bgColor, 0.8);
+      var adjText = adjustSaturation(textColor, 0.8);
+      var controls = document.querySelectorAll("button:not(.reset-button), input:not(.reset-button), textarea, select");
+      controls.forEach(el => {
+        el.style.backgroundColor = adjBg;
+        el.style.color = adjText;
+      });
+    }
+
+    /* ----- 접속자 이력 (누적 기록) ----- */
+    var connectionHistory = []; // { role, nickname (if participant), peer }
+
+    function updateConnectionHistorySteno() {
+      var ul = document.getElementById('connection-history-steno');
+      ul.innerHTML = "";
+      connectionHistory.forEach(entry => {
+        var li = document.createElement('li');
+        if(entry.role === "속기사") {
+          li.textContent = "속기사";
+        } else {
+          li.textContent = entry.nickname + " (" + abbreviatePeerId(entry.peer) + ")";
+        }
+        ul.appendChild(li);
+      });
+    }
+    function updateConnectionHistoryParticipant(history) {
+      var ul = document.getElementById('connection-history-participant');
+      ul.innerHTML = "";
+      history.forEach(entry => {
+        var li = document.createElement('li');
+        if(entry.role === "속기사") {
+          li.textContent = "속기사";
+        } else {
+          li.textContent = entry.nickname + " (" + abbreviatePeerId(entry.peer) + ")";
+        }
+        ul.appendChild(li);
+      });
+    }
+
+    /* ----- 기본 이벤트 핸들러 ----- */
+    document.getElementById('btn-agree').addEventListener('click', function() {
+      document.getElementById('notice-panel').style.display = 'none';
+      document.getElementById('role-selection').classList.remove('hidden');
+    });
+    document.getElementById('toggle-steno-credentials').addEventListener('click', function() {
+      var idField = document.getElementById('my-id');
+      var passField = document.getElementById('steno-password');
+      if(idField.type === "password") { 
+        idField.type = "text"; 
+        passField.type = "text"; 
+        this.textContent = "숨기기"; 
+      } else { 
+        idField.type = "password"; 
+        passField.type = "password"; 
+        this.textContent = "보기"; 
+      }
+    });
+    document.getElementById('copy-steno-credentials').addEventListener('click', function() {
+      var id = document.getElementById('my-id').value;
+      var pass = document.getElementById('steno-password').value;
+      var copyText = "속기사 ID : " + id + " 연결 암호 : " + pass;
+      navigator.clipboard.writeText(copyText).then(() => { alert("복사되었습니다."); })
+        .catch(err => { console.error("클립보드 복사 실패: ", err); });
+    });
+    document.getElementById('toggle-participant-credentials').addEventListener('click', function() {
+      var credField = document.getElementById('steno-credentials-input');
+      if(credField.type === "password") { 
+        credField.type = "text"; 
+        this.textContent = "숨기기"; 
+      } else { 
+        credField.type = "password"; 
+        this.textContent = "보기"; 
+      }
+    });
+
+    /* ----- 색상 변경 이벤트 ----- */
+    document.getElementById('bg-color-steno').addEventListener('input', function(){
+      document.body.style.backgroundColor = this.value;
+      updateAllControlStyles(this.value, document.getElementById('text-color-steno').value);
+    });
+    document.getElementById('text-color-steno').addEventListener('input', function(){
+      document.body.style.color = this.value;
+      updateAllControlStyles(document.getElementById('bg-color-steno').value, this.value);
+    });
+    document.getElementById('reset-colors-steno').addEventListener('click', function(){
+      document.getElementById('bg-color-steno').value = "#ffffff";
+      document.getElementById('text-color-steno').value = "#000000";
+      document.body.style.backgroundColor = "#ffffff";
+      document.body.style.color = "#000000";
+      updateAllControlStyles("#ffffff", "#000000");
+    });
+    document.getElementById('bg-color-participant').addEventListener('input', function(){
+      document.body.style.backgroundColor = this.value;
+      updateAllControlStyles(this.value, document.getElementById('text-color-participant').value);
+    });
+    document.getElementById('text-color-participant').addEventListener('input', function(){
+      document.body.style.color = this.value;
+      updateAllControlStyles(document.getElementById('bg-color-participant').value, this.value);
+    });
+    document.getElementById('reset-colors-participant').addEventListener('click', function(){
+      document.getElementById('bg-color-participant').value = "#ffffff";
+      document.getElementById('text-color-participant').value = "#000000";
+      document.body.style.backgroundColor = "#ffffff";
+      document.body.style.color = "#000000";
+      updateAllControlStyles("#ffffff", "#000000");
+    });
+
+    var peer;
+    var connections = [];
+
+    /* ----- 역할 선택 및 Peer 연결 ----- */
+    document.getElementById('btn-stenographer').addEventListener('click', function() {
+      document.getElementById('role-selection').style.display = 'none';
+      document.getElementById('stenographer-panel').classList.remove('hidden');
+      initStenographer();
+    });
+    document.getElementById('btn-participant').addEventListener('click', function() {
+      document.getElementById('role-selection').style.display = 'none';
+      document.getElementById('participant-panel').classList.remove('hidden');
+      initParticipant();
+    });
+
+    /* ----- 속기사 초기화 ----- */
+    function initStenographer() {
+      peer = new Peer();
+      peer.on('open', function(id) {
+        document.getElementById('my-id').value = id;
+        logMessage('Peer 연결됨: ' + abbreviatePeerId(id));
+        connectionHistory.push({ role: "속기사", peer: id });
+        updateConnectionHistorySteno();
+      });
+      window.addEventListener('beforeunload', function() { if(peer && !peer.destroyed) peer.destroy(); });
+      window.addEventListener('unload', function() { if(peer && !peer.destroyed) peer.destroy(); });
+      peer.on('connection', function(conn) {
+        logMessage('새로운 연결 시도: ' + abbreviatePeerId(conn.peer));
+        conn.on('data', function(authData) {
+          if(typeof authData === "object" && authData.nickname && authData.password) {
+            var stenoPassword = document.getElementById('steno-password').value;
+            if(authData.password === stenoPassword) {
+              conn.nickname = authData.nickname;
+              connections.push(conn);
+              logMessage('참여자 "' + authData.nickname + '" 연결됨 (Peer: ' + abbreviatePeerId(conn.peer) + ')');
+              conn.send({ type: "system", text: '속기사와 연결되었습니다.' });
+              if(!connectionHistory.find(e => e.peer === conn.peer)) {
+                connectionHistory.push({ role: "참여자", nickname: authData.nickname, peer: conn.peer });
+              }
+              updateConnectionHistorySteno();
+              // 모든 연결된 참여자에게 접속자 이력을 전송
+              connections.forEach(c => { if(c.open) c.send({ type: "history", history: connectionHistory }); });
+              conn.on('data', function(data) {
+                logMessage('참여자 "' + authData.nickname + '"로부터 데이터 수신: ' + JSON.stringify(data));
+              });
+            } else {
+              conn.send({ type: "system", text: '잘못된 암호입니다. 연결이 종료됩니다.' });
+              logMessage('참여자 "' + authData.nickname + '" 연결 거부 (잘못된 암호)');
+              conn.close();
+            }
+          } else {
+            logMessage('잘못된 인증 데이터 수신: ' + authData);
+            conn.close();
+          }
+        });
+        conn.on('close', function() {
+          connections = connections.filter(c => c !== conn);
+          // 접속자 이력은 누적 기록이므로 제거하지 않음.
+        });
+      });
+      function sendText() {
+        var text = document.getElementById('text-input').value;
+        if(text.trim() === "") return;
+        logMessage('전송: ' + text);
+        connections.forEach(conn => { if(conn.open) conn.send({ type: "final", text: text }); });
+        document.getElementById('text-input').value = "";
+      }
+      function sendPreview() {
+        var text = document.getElementById('text-input').value;
+        connections.forEach(conn => { if(conn.open) conn.send({ type: "preview", text: text }); });
+      }
+      document.getElementById('btn-send').addEventListener('click', sendText);
+      document.getElementById('text-input').addEventListener('keydown', function(e) {
+        if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); }
+      });
+      document.getElementById('text-input').addEventListener('input', sendPreview);
+      document.getElementById('font-size-steno').addEventListener('change', function() {
+        document.getElementById('log').style.fontSize = this.value + 'px';
+        document.getElementById('text-input').style.fontSize = this.value + 'px';
+      });
+      document.getElementById('log-height-steno').addEventListener('change', function() {
+        document.getElementById('log').style.height = this.value + 'px';
+      });
+    }
+
+    /* ----- 참여자 초기화 ----- */
+    function initParticipant() {
+      peer = new Peer();
+      peer.on('open', function(id) {
+        logParticipantMessage('참여자로 Peer 연결됨: ' + abbreviatePeerId(id));
+      });
+      window.addEventListener('beforeunload', function() { if(peer && !peer.destroyed) peer.destroy(); });
+      window.addEventListener('unload', function() { if(peer && !peer.destroyed) peer.destroy(); });
+      document.getElementById('font-size').addEventListener('change', function() {
+        document.getElementById('received-text').style.fontSize = this.value + 'px';
+      });
+      document.getElementById('log-height').addEventListener('change', function() {
+        document.getElementById('received-text').style.height = this.value + 'px';
+      });
+      function updateHistoryFromStenographer(history) {
+        var ul = document.getElementById('connection-history-participant');
+        ul.innerHTML = "";
+        history.forEach(entry => {
+          var li = document.createElement('li');
+          if(entry.role === "속기사") { li.textContent = "속기사"; }
+          else { li.textContent = entry.nickname + " (" + abbreviatePeerId(entry.peer) + ")"; }
+          ul.appendChild(li);
+        });
+      }
+      document.getElementById('btn-connect').addEventListener('click', function() {
+        var credentials = document.getElementById('steno-credentials-input').value;
+        var nickname = document.getElementById('nickname-input').value;
+        if(credentials.trim() === "" || nickname.trim() === "") {
+          logParticipantMessage('모든 필드를 입력해 주세요.');
+          return;
+        }
+        var parts = credentials.split(/연결\s*암호\s*:/);
+        if(parts.length < 2) {
+          logParticipantMessage('형식이 올바르지 않습니다.');
+          return;
+        }
+        var stenoId = parts[0].replace(/^\s*속기사\s*ID\s*:\s*/, '').trim();
+        var joinPassword = parts[1].trim();
+        if(stenoId === "" || joinPassword === "") {
+          logParticipantMessage('속기사 ID 또는 연결 암호가 누락되었습니다.');
+          return;
+        }
+        var conn = peer.connect(stenoId);
+        window.stenoConn = conn;
+        conn.on('open', function() {
+          conn.send({ nickname: nickname, password: joinPassword });
+          logParticipantMessage('속기사와 연결 시도 중...');
+        });
+        conn.on('data', function(data) {
+          if(typeof data === 'object') {
+            if(data.type === 'preview') { updatePreview(data.text); }
+            else if(data.type === 'final') { appendFinalMessage(data.text); }
+            else if(data.type === 'system') { appendFinalMessage(data.text); }
+            else if(data.type === 'history') { updateHistoryFromStenographer(data.history); }
+            else { appendFinalMessage(JSON.stringify(data)); }
+          } else { appendFinalMessage(data); }
+        });
+        conn.on('error', function(err) {
+          if(err && err.type === "peer-unavailable"){
+            logParticipantMessage("존재하지 않는 id 입니다.");
+          } else {
+            logParticipantMessage("연결 에러: " + err);
+          }
+        });
+        conn.on('close', function() {
+          // 참여자 측에서는 연결 종료 시 별도 메시지 남기지 않음.
+        });
+      });
+    }
+
+    /* ----- 메시지 업데이트 함수 ----- */
+    function updatePreview(text) {
+      var container = document.getElementById('received-text');
+      var lastChild = container.lastElementChild;
+      if(lastChild && lastChild.classList.contains('preview')){
+        lastChild.textContent = text;
+      } else {
+        var p = document.createElement('p');
+        p.classList.add('preview');
+        p.textContent = text;
+        container.appendChild(p);
+      }
+      container.scrollTop = container.scrollHeight;
+    }
+    function appendFinalMessage(text) {
+      var container = document.getElementById('received-text');
+      var lastChild = container.lastElementChild;
+      if(lastChild && lastChild.classList.contains('preview')){
+        container.removeChild(lastChild);
+      }
+      var p = document.createElement('p');
+      p.textContent = text;
+      container.appendChild(p);
+      container.scrollTop = container.scrollHeight;
+    }
+    function logMessage(message) {
+      var logDiv = document.getElementById('log');
+      var p = document.createElement('p');
+      p.textContent = message;
+      logDiv.appendChild(p);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+    function logParticipantMessage(message) {
+      var logDiv = document.getElementById('received-text');
+      var p = document.createElement('p');
+      p.textContent = message;
+      logDiv.appendChild(p);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+    function abbreviatePeerId(id) {
+      if(!id) return "";
+      return id.length > 6 ? id.substr(0,3) + "..." + id.substr(id.length - 3) : id;
+    }
+  </script>
+</body>
+</html>
